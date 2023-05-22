@@ -62,7 +62,7 @@ class HealthFacility(Base):
     id = Column(Integer, primary_key=True, server_default=text("nextval('health_facilities_id_seq'::regclass)"))
 
 
-class Hospital(Base):
+class Hospitals(Base):
     __tablename__ = 'hospitals'
     __table_args__ = {'comment': 'aha hospitals'}
 
@@ -607,11 +607,23 @@ def main():
     Session = sessionmaker(bind = engine)
     session = Session()
 
-    stmt = session.query(Hospital.id)
+    # stmt = session.query(Hospital.id)
 
-    table_name = Table('hospitals', metadata, autoload=True)
-    new_column = Column('scrape_instruction', JSONB)
-    alter_table = table_name.append_column(new_column)
+    # table_name = Table('hospitals', metadata, autoload=True)
+    # new_column = Column('scrape_instruction', JSONB)
+    # alter_table = table_name.append_column(new_column)
+    # session.commit()
+
+    metadata = MetaData(bind=engine)
+    metadata.reflect()
+    
+    hospitals = metadata.tables['hospitals']
+    scrape_instruction = 'scrape_instruction'
+    # Add the new column to the table
+    if scrape_instruction not in hospitals.columns:
+        with engine.connect() as connection:
+            connection.execute(f"ALTER TABLE hospitals ADD COLUMN scrape_instruction JSONB")
+        
     session.commit()
 
     data = pd.read_csv('parse_hospitals.csv', dtype={'id':'Int64'})
@@ -619,17 +631,24 @@ def main():
     data.set_index('id', inplace=True)
 
     for id, row in data.iterrows():
+        url = ''
+        files = ''
+        
+        if bool(row['link_to_file_list']) and type(row['link_to_file_list']) == str:
+            url = row['link_to_file_list']
+        
+        if bool(row['link_to_files']) and type(row['link_to_files']) == str:
+            file_list = row['link_to_files'].split(',')
+            files = [{'link_to_download': file.strip(), 'file_hash': ''} for file in file_list]
+
         scrape_instr = { 
-            'url': row['link_to_file(array)'],
-            'files': {
-                'link_to_download': row['link_to_file_list'],
-                'file_hash': ''
-            }
+            'url': url,
+            'files': files
         }
-        result = json.dumps(scrape_instr)
-        session.query(Hospital).\
-           filter(Hospital.id == int(id)).\
-           update({Hospital.scrape_instruction: result})
+#         result = json.dumps(scrape_instr)
+
+        trx = hospitals.update().where(hospitals.c.id == int(id)).values(scrape_instruction=scrape_instr)
+        session.execute(trx)
         session.commit()
 
     session.close()
